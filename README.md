@@ -32,6 +32,21 @@ A GPU memory manager allows to analyze graphs larger than GPU memory efficiently
 All hybrid versions device workload between CUDA and OptiX to accelerate neighbor traversal and intersection operations.
 
 ---
+## Example Python call with NetworkX
+
+```python
+import networkx as nx
+from pygraph_rtx import Graph
+
+G = nx.fast_gnp_random_graph(1000, 0.01)
+grtx = Graph()
+grtx.from_networkx(G)
+grtx.prepare()
+res = grtx.run_bfs(0)
+print(res)
+```
+
+---
 
 ## Build Instructions
 
