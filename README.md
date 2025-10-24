@@ -39,7 +39,7 @@ All hybrid versions device workload between CUDA and OptiX to accelerate neighbo
 
 - **CUDA** ≥ 13.0  
 - **OptiX SDK** ≥ 9.0  
-- **CMake** ≥ 3.20  
+- **CMake** ≥ 3.13  
 - **GPU** with RT Cores (e.g. RTX 4070)
 
 Tested on: RTX 4070, RTX 5090, RTX A6000 Pro
