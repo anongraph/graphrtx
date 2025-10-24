@@ -54,7 +54,7 @@ cd graphrtx
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j
-
+```
 
 
 ### Evaluation Datasets
