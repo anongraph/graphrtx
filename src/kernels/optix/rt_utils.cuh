@@ -65,7 +65,6 @@ uint32_t count_common_scalar(const uint32_t* __restrict__ A, uint32_t lenA,
 {
     if (lenA == 0 || lenB == 0) return 0;
 
-    // Use binary search only with strong imbalance to reduce wasted probes.
     const bool binsearch = (lenA * 8u < lenB) || (lenB * 8u < lenA);
     uint32_t c = 0;
 
@@ -108,7 +107,6 @@ uint32_t count_common_gt_partner(uint32_t partner,
                                  const uint32_t* __restrict__ row_ptr,
                                  const uint32_t* __restrict__ nbrs)
 {
-    // Fast exits
     if (seg_len == 0) return 0;
 
     const uint32_t p_beg = __ldg(&row_ptr[partner]);
@@ -116,10 +114,8 @@ uint32_t count_common_gt_partner(uint32_t partner,
     const uint32_t p_len = p_end - p_beg;
     if (p_len == 0) return 0;
 
-    // If the segment's max element <= partner, no elements greater than partner exist.
     if (__ldg(&seg[seg_len - 1]) <= partner) return 0;
 
-    // Lower-bound both sides to > partner
     const uint32_t s_off = u32_lower_bound(seg, seg_len, partner + 1);
     if (s_off >= seg_len) return 0;
     const uint32_t* __restrict__ S = seg + s_off;
@@ -131,7 +127,6 @@ uint32_t count_common_gt_partner(uint32_t partner,
     const uint32_t* __restrict__ PN = P + p_off;
     const uint32_t PN_len = p_len - p_off;
 
-    // Small ranges → cheap bitset intersection
     if (S_len <= 32 && PN_len <= 32) {
         const uint32_t minv = min(__ldg(&S[0]), __ldg(&PN[0]));
         const uint32_t maxv = max(__ldg(&S[S_len - 1]), __ldg(&PN[PN_len - 1]));
@@ -139,7 +134,6 @@ uint32_t count_common_gt_partner(uint32_t partner,
             return count_common_bitset_safe(S, S_len, PN, PN_len);
     }
 
-    // Otherwise: scalar with tuned heuristic and cached loads
     return count_common_scalar(S, S_len, PN, PN_len);
 }
 

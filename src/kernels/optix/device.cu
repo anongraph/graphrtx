@@ -10,7 +10,7 @@ extern "C" __global__ void __raygen__graph()
 
     const Job j = params.jobs[jobIdx];
 
-    if (j.qtype == EXPAND || j.qtype == PAGERANK || j.qtype == SSSP || j.qtype == BETWEENNESS) {
+    if (j.qtype == EXPAND || j.qtype == PAGERANK || j.qtype == SSSP || j.qtype == BETWEENNESS || j.qtype == WCC || j.qtype == CDLP) {
         const float3 ro = make_float3(0.5f, (float)j.src + 0.5f, 0.5f);
         const float3 rd = make_float3(1.0f, 0.0f, 0.0f);
         optixTrace(params.tlas, ro, rd,
@@ -117,7 +117,88 @@ extern "C" __global__ void __anyhit__uasp()
         return;
     }
     
-    // --- PageRank Scatter ---
+    if (j.qtype == CDLP) {
+        const uint32_t u = j.src;
+    
+        if (seg.owner != u) { optixIgnoreIntersection(); return; }
+    
+        const uint32_t start = seg.start;
+        const uint32_t end   = start + seg.len;
+    
+        const uint32_t cur = __ldg(&params.cdlp_labels_curr[u]);
+    
+        if (end <= start) {
+            params.cdlp_labels_next[u] = cur;
+            optixIgnoreIntersection();
+            return;
+        }
+    
+        uint32_t keys[16];
+        uint32_t cnts[16];
+    #pragma unroll
+        for (int i = 0; i < 16; ++i) { keys[i] = 0xFFFFFFFFu; cnts[i] = 0u; }
+    
+        auto map_add = [&](uint32_t key) {
+    #pragma unroll
+            for (int i = 0; i < 16; ++i) {
+                uint32_t k = keys[i];
+                if (k == key) { cnts[i]++; return; }
+                if (k == 0xFFFFFFFFu) { keys[i] = key; cnts[i] = 1u; return; }
+            }
+        };
+    
+        for (uint32_t off = start; off < end; ++off) {
+            const uint32_t v = __ldg(&params.nbrs[off]);
+            const uint32_t lbl = __ldg(&params.cdlp_labels_curr[v]);
+            map_add(lbl);
+        }
+    
+        uint32_t bestLabel = cur;
+        uint32_t bestCnt   = 0u;
+    #pragma unroll
+        for (int i = 0; i < 16; ++i) {
+            const uint32_t k = keys[i];
+            const uint32_t c = cnts[i];
+            if (k == 0xFFFFFFFFu) continue;
+            if (c > bestCnt || (c == bestCnt && k < bestLabel)) {
+                bestCnt = c;
+                bestLabel = k;
+            }
+        }
+    
+        params.cdlp_labels_next[u] = bestLabel;
+        if (bestLabel != cur) atomicAdd(params.cdlp_changed, 1u);
+    
+        optixIgnoreIntersection();
+        return;
+    }
+
+    if (j.qtype == WCC) {
+        const uint32_t u = j.src;
+    
+        // Ensure this segment belongs to u
+        if (seg.owner != u) { optixIgnoreIntersection(); return; }
+    
+        const uint32_t cid = params.wcc_current_comp;
+    
+        for (uint32_t off = start; off < end; ++off) {
+            const uint32_t v = __ldg(&params.nbrs[off]);
+    
+            // Claim v for this component if unassigned
+            const uint32_t old = atomicCAS(&params.wcc_comp[v], 0xFFFFFFFFu, cid);
+            if (old == 0xFFFFFFFFu) {
+                uint32_t idx = atomicAdd(params.next_count, 1u);
+                if (idx < params.next_capacity)
+                    params.next_frontier[idx] = v;
+                else
+                    atomicSub(params.next_count, 1u);
+            }
+        }
+    
+        optixIgnoreIntersection();
+        return;
+    }
+
     if (j.qtype == PAGERANK) {
         const uint32_t u = j.src;
         const uint32_t deg_u = params.row_ptr[u + 1] - params.row_ptr[u];
@@ -132,7 +213,6 @@ extern "C" __global__ void __anyhit__uasp()
         return;
     }
 
-    // --- SSSP Relaxation ---
     if (j.qtype == SSSP) {
         const float du = params.sssp_distances[j.src];
         if (isinf(du)) {
@@ -164,7 +244,6 @@ extern "C" __global__ void __anyhit__uasp()
 
         if (dist_node == 0xFFFFFFFFu) { optixIgnoreIntersection(); return; }
 
-        // Forward
         if (params.bc_phase == 0u) {
             const uint32_t du = dist_node;
             const uint32_t su = sigma_node;
