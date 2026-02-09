@@ -12,22 +12,48 @@
 #include <chrono>
 #include <cstring>
 #include <algorithm>
+#include <cstdint>
+#include <iostream>
 
 #include "../shared.h"
 #include "../common.hpp"
+
+
+enum class ShardMode : uint32_t { Contiguous = 0, RoundRobin = 1 };
+
+struct ShardConfig {
+  bool      enabled   = false;
+  uint32_t  num_gpus  = 1;  
+  uint32_t  this_gpu  = 0;   
+  ShardMode mode      = ShardMode::Contiguous;
+
+  bool owns(uint32_t part_id, uint32_t Pparts) const {
+    if (!enabled || num_gpus <= 1) return true;
+    if (mode == ShardMode::RoundRobin) {
+      return (part_id % num_gpus) == this_gpu;
+    }
+
+    uint32_t chunk = (Pparts + num_gpus - 1u) / num_gpus;
+    uint32_t begin = this_gpu * chunk;
+    uint32_t end   = std::min(Pparts, begin + chunk);
+    return (part_id >= begin && part_id < end);
+  }
+};
 
 struct Partition {
   uint32_t id;
   uint32_t seg_first;
   uint32_t seg_count;
   size_t   gas_bytes_est{0};
+
   bool     resident{false};
   OptixTraversableHandle gas{};
   CUdeviceptr d_gas{};
 
-  // === DUMMY SUPPORT ===
-  CUdeviceptr d_bounds{0};   
+  CUdeviceptr d_bounds{0};
   size_t      bounds_bytes{0};
+
+  bool owned{true}; 
 };
 
 struct PartitionInfo {
@@ -37,14 +63,13 @@ struct PartitionInfo {
   uint32_t seg_count{0};
   size_t   gas_bytes_est{0};
   bool     resident{false};
+  bool     owned{true};
 };
-
 
 class GPUMemoryManager {
 public:
   float bvh_build_ms{0.0f};
 
-  // === Added optional dummy mask ===
   GPUMemoryManager(OptixDeviceContext ctx,
                    const std::vector<UASP>& h_uasps,
                    const std::vector<float>& h_aabbs,
@@ -52,101 +77,22 @@ public:
                    float memFrac = 0.7f,
                    uint32_t num_partitions = 0,
                    const std::vector<uint8_t>* aabb_mask_opt = nullptr)
-  : ctx_(ctx), uasps_(h_uasps), aabbs_(h_aabbs), P_(total_segments),
-    aabb_mask_opt_(aabb_mask_opt) {
+  : GPUMemoryManager(ctx, h_uasps, h_aabbs, total_segments, memFrac,
+                     num_partitions, aabb_mask_opt,
+                     false, 1, 0,
+                     ShardMode::Contiguous) {}
 
-    size_t freeB=0, totB=0;
-    CUDA_CHECK(cudaMemGetInfo(&freeB,&totB));
-    const size_t floorBytes = 64ull*1024*1024;
-    limitBytes_ = (size_t)(memFrac * freeB);
-    if (limitBytes_ < floorBytes) limitBytes_ = floorBytes;
-
-    uint32_t tryParts;
-    if (num_partitions > 0) {
-      tryParts = num_partitions;
-    } else {
-      uint32_t baseParts = std::max<uint32_t>(1, (uint32_t)std::sqrt((double)P_));
-      tryParts  = baseParts;
-
-      createPartitions(tryParts);
-      estimatePartitionBytes();
-
-      while (maxPartBytes_ * 3 > limitBytes_ && tryParts < std::max<uint32_t>(baseParts*8, 2048u)) {
-        tryParts *= 2;
-        createPartitions(tryParts);
-        estimatePartitionBytes();
-      }
-      std::cout << "[MM] Using auto-calculated partition count: " << tryParts << "\n";
-    }
-
-    createPartitions(tryParts);
-    estimatePartitionBytes();
-
-    // === DUMMY SUPPORT: detect tail of dummy AABBs ===
-    if (aabb_mask_opt_ && !aabb_mask_opt_->empty()) {
-      const auto& mask = *aabb_mask_opt_;
-      const uint32_t total_prims = (uint32_t)(aabbs_.size() / 6);
-      uint32_t tail = total_prims;
-      while (tail > 0 && mask[tail - 1] == 1u) --tail;
-      if (tail < total_prims) {
-        dummy_first_ = tail;
-        dummy_count_ = total_prims - tail;
-      }
-    }
-
-    if (dummy_count_ > 0) {
-      Partition p{};
-      p.id = (uint32_t)partitions_.size();
-      p.seg_first = dummy_first_;
-      p.seg_count = dummy_count_;
-      p.gas_bytes_est = std::max<size_t>(p.seg_count * sizeof(float) * 6 * 2, 1ull<<20);
-      p.resident = false;
-      partitions_.push_back(p);
-      dummy_pid_ = p.id;
-    }
-
-    std::cout << "[MM] Free=" << (freeB/1e9) << " GB, Limit=" << (limitBytes_/1e9)
-              << " GB, Segments=" << P_ << ", Partitions=" << partitions_.size()
-              << ", MaxPartBytes≈" << (maxPartBytes_/1e6) << " MB\n";
-
-    size_t totalEst = maxPartBytes_ * partitions_.size();
-    if (totalEst < limitBytes_) {
-      useSingleTLAS_ = true;
-      CUstream stream; CUDA_CHECK(cudaStreamCreate(&stream));
-      using clk = std::chrono::high_resolution_clock;
-      const auto wall_t0 = clk::now();
-
-      for (auto& p : partitions_) loadPartitionIfNeeded(p.id, stream);
-      
-      buildTLASDynamic(&global_tlas_, &global_tlas_mem_, &global_instance_bases_,
-                       &global_num_instances_, stream);
-      CUDA_CHECK(cudaStreamSynchronize(stream));
-      const auto wall_t1 = clk::now();
-      const double elapsed_ms_bvh = std::chrono::duration<double, std::milli>(wall_t1 - wall_t0).count();  
-      std::cout << "BVH:" << elapsed_ms_bvh << " ms" << std::endl;
-      std::cout << "BVH size: " << getTotalBVHBytes() / (1024.0 * 1024.0) << " MB" << std::endl;
-      CUDA_CHECK(cudaStreamDestroy(stream));
-    } else {
-      useSingleTLAS_ = false;
-      std::cout << "[MM] Using streaming mode (multi-TLAS).\n";
-
-      // Force-load dummy partition so it always stays resident
-      if (dummy_pid_ != UINT32_MAX) {
-        CUstream s; CUDA_CHECK(cudaStreamCreate(&s));
-        loadPartitionIfNeeded(dummy_pid_, s);
-        touch(dummy_pid_);
-        CUDA_CHECK(cudaStreamSynchronize(s));
-        CUDA_CHECK(cudaStreamDestroy(s));
-      }
-    }
-
-    // === Initialize dummy pool ===
-    if (dummy_count_ > 0) {
-      initDummyPool();
-      std::cout << "[MM] Dummy pool: first=" << dummy_first_
-                << " count=" << dummy_count_ << "\n";
-    }
-  }
+  GPUMemoryManager(OptixDeviceContext ctx,
+                   const std::vector<UASP>& h_uasps,
+                   const std::vector<float>& h_aabbs,
+                   uint32_t total_segments,
+                   float memFrac,
+                   uint32_t num_partitions,
+                   const std::vector<uint8_t>* aabb_mask_opt,
+                   bool shard_enabled,
+                   uint32_t num_gpus,
+                   uint32_t this_gpu,
+                   ShardMode shard_mode);
 
   size_t getTotalBVHBytes() const;
 
@@ -158,7 +104,6 @@ public:
                      uint32_t* num_instances) const;
 
   void ensureResident(const std::vector<uint32_t>& need_ids, CUstream stream);
-  
 
   void buildTLASDynamic(OptixTraversableHandle* outTLAS,
                         CUdeviceptr* outTLASMem,
@@ -166,11 +111,15 @@ public:
                         uint32_t* out_num_instances,
                         CUstream stream);
 
-  uint32_t vertexToPartition(uint32_t, uint32_t uasp_first_v) const;
+  uint32_t vertexToPartition(uint32_t v, uint32_t uasp_first_v) const;
 
   PartitionInfo get_partition_info(uint32_t pid) const;
 
-  // === DUMMY SUPPORT API ===
+  bool shardingEnabled() const { return shard_.enabled; }
+  uint32_t numGpus() const { return shard_.num_gpus; }
+  uint32_t thisGpu() const { return shard_.this_gpu; }
+  bool ownsPartition(uint32_t pid) const { return shard_.owns(pid, (uint32_t)partitions_.size()); }
+
   void initDummyPool() {
     if (dummy_count_ == 0) return;
     dummy_free_.clear();
@@ -188,7 +137,6 @@ public:
     return id;
   }
 
-  // Preferred: try to allocate; if none left -> trigger full rebuild.
   uint32_t allocateDummyOrRebuild(CUstream stream);
 
   void freeDummy(uint32_t primIndex) {
@@ -201,12 +149,9 @@ public:
 
   void moveDummyAndRefit(uint32_t primIndex, const float new6[6], CUstream stream);
 
-
-  // Expose how many full rebuilds were triggered by pool exhaustion
   uint32_t numFullRebuildsTriggered() const { return num_full_rebuilds_; }
 
-
-  public:
+public:
   double benchmarkDummyUpdates(uint32_t num_updates, CUstream stream);
 
 private:
@@ -214,19 +159,24 @@ private:
   const std::vector<UASP>& uasps_;
   const std::vector<float>& aabbs_;
   const uint32_t P_;
+
+  ShardConfig shard_;
+
   std::vector<Partition> partitions_;
   std::list<uint32_t> lru_;
   std::unordered_map<uint32_t, std::list<uint32_t>::iterator> where_;
+
   size_t usedBytes_{0}, limitBytes_{0}, maxPartBytes_{0};
   std::vector<uint32_t> instanceBases_;
+
   bool useSingleTLAS_{false};
+
   OptixTraversableHandle global_tlas_{0};
   CUdeviceptr global_tlas_mem_{0};
   CUdeviceptr global_instance_bases_{0};
   uint32_t global_num_instances_{0};
   size_t global_tlas_bytes_{0};
 
-  // === DUMMY SUPPORT ===
   const std::vector<uint8_t>* aabb_mask_opt_{nullptr};
   uint32_t dummy_first_{0};
   uint32_t dummy_count_{0};
@@ -237,15 +187,14 @@ private:
 
   void createPartitions(uint32_t parts);
   void estimatePartitionBytes();
+
+  void markOwnership();
+
   void loadPartitionIfNeeded(uint32_t pid, CUstream stream);
   void evictOne(CUstream);
   void touch(uint32_t id);
 
-  // === COMPLETE REBUILD PATH ===
   void rebuildPartitionGAS(uint32_t pid, CUstream stream);
-
-
-  // Rebuild *all resident* partition GAS and the TLAS.
   void fullRebuild(CUstream stream);
 };
 
