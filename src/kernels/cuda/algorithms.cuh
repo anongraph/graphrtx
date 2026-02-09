@@ -62,15 +62,19 @@ extern "C" void launch_pr_diff_norm(
   float* d_out_sum,
   CUstream s);
 
-extern "C" void launch_sssp_relax_frontier(
-  const uint32_t* d_row_ptr,
-  const uint32_t* d_nbrs,
-  const uint32_t* d_frontier,
-  uint32_t frontier_size,
-  float* d_dist,
-  uint32_t* d_next_frontier,
-  uint32_t* d_next_count,
-  CUstream s);
+  extern "C" void launch_sssp_relax_frontier(
+    const uint32_t* d_row_ptr,
+    const uint32_t* d_nbrs,
+    uint32_t num_vertices,
+    const uint32_t* d_frontier,
+    uint32_t frontier_size,
+    float* d_dist,
+    uint32_t* d_next_frontier,
+    uint32_t* d_next_count,
+    uint32_t next_capacity,
+    uint32_t* d_overflow_flag, 
+    CUstream s
+);
 
 extern "C"
 void launch_bc_forward_expand_nodes(const uint32_t* nodes,
@@ -91,5 +95,44 @@ extern "C" void launch_bc_backward_accumulate_nodes(
     const float*    delta,       float* delta_out,
     CUstream        stream);
 
-    
+
+extern "C" void k_find_next_unassigned_u32(const uint32_t* comp, uint32_t n, uint32_t* out_min_idx);
+
+extern "C" void launch_find_next_unassigned_u32(const uint32_t* d_comp, uint32_t n, uint32_t* d_out, cudaStream_t s);
+
+extern "C"  void k_wcc_set_seed(uint32_t* comp, uint32_t src, uint32_t comp_id);
+
+extern "C"  void launch_wcc_set_seed(uint32_t* d_comp, uint32_t src, uint32_t comp_id, cudaStream_t s);
+
+extern "C" void launch_wcc_expand_frontier(
+  const uint32_t* d_frontier,
+  uint32_t frontier_size,
+  const uint32_t* row_ptr,
+  const uint32_t* nbrs,
+  uint32_t* d_comp,
+  uint32_t comp_id,
+  uint32_t* d_next_frontier,
+  uint32_t* d_next_count,
+  uint32_t next_capacity,
+  cudaStream_t s);
+
+
+extern "C" void launch_cdlp_init_labels(uint32_t* d_labels, uint32_t n, cudaStream_t s);
+
+extern "C" void launch_set_u32(uint32_t* d_ptr, uint32_t v, cudaStream_t s);
+
+extern "C" void launch_cdlp_iterate_nodes(
+    const uint32_t* d_nodes,
+    uint32_t num_nodes,
+    const uint32_t* row_ptr,
+    const uint32_t* nbrs,
+    const uint32_t* labels_curr,
+    uint32_t* labels_next,
+    uint32_t* changed,
+    cudaStream_t s);
+
+extern "C" void launch_copy_u32(uint32_t* dst, const uint32_t* src, uint32_t n, cudaStream_t s);
+
+extern "C" void launch_iota_u32(uint32_t* d_nodes, uint32_t n, cudaStream_t s);
+
 #endif
