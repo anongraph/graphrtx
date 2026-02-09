@@ -49,11 +49,15 @@ add_executable(bench_all
     src/algorithms/sssp.cpp
     src/algorithms/bc.cpp
     src/algorithms/tc.cpp
+    src/algorithms/wcc.cpp
+    src/algorithms/cdlp.cpp
     src/kernels/cuda/bfs.cu
     src/kernels/cuda/tc.cu
     src/kernels/cuda/pr.cu
     src/kernels/cuda/bc.cu
     src/kernels/cuda/sssp.cu
+    src/kernels/cuda/wcc.cu
+    src/kernels/cuda/cdlp.cu
     src/shared.h
 )
 add_dependencies(bench_all device_ptx)
@@ -440,6 +444,127 @@ if(UNIX)
       INSTALL_RPATH "${OPTIX_ROOT}/lib64")
   elseif(EXISTS "${OPTIX_ROOT}/lib")
     set_target_properties(pygraph_rtx PROPERTIES
+      BUILD_RPATH "${OPTIX_ROOT}/lib"
+      INSTALL_RPATH "${OPTIX_ROOT}/lib")
+  endif()
+endif()
+
+# Host executable for update benchmark
+add_executable(bench_updates
+    src/memory/gpu_manager.cpp
+    bench/bench_updates.cpp
+    src/rt/rt_pipeline.cpp
+    src/graph/graph.cpp
+    src/graph/algorithms.cpp
+    src/algorithms/partition.cpp
+    src/algorithms/bfs.cpp
+    src/algorithms/pr.cpp
+    src/algorithms/sssp.cpp
+    src/algorithms/bc.cpp
+    src/algorithms/tc.cpp
+    src/algorithms/wcc.cpp
+    src/algorithms/cdlp.cpp
+    src/kernels/cuda/bfs.cu
+    src/kernels/cuda/tc.cu
+    src/kernels/cuda/pr.cu
+    src/kernels/cuda/bc.cu
+    src/kernels/cuda/sssp.cu
+    src/kernels/cuda/wcc.cu
+    src/kernels/cuda/cdlp.cu
+    src/shared.h
+)
+add_dependencies(bench_updates device_ptx)
+
+# Pass PTX path
+target_compile_definitions(bench_updates PRIVATE DEVICE_PTX_PATH="${PTX_OUT}")
+
+# Includes & libs
+target_include_directories(bench_updates PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+    ${OPTIX_ROOT}/include
+    src
+)
+
+target_link_libraries(bench_updates PRIVATE
+    ${CUDAToolkit_LIBRARIES}
+    cuda
+    dl
+)
+
+if(OPTIX_DRIVER_LIB)
+    target_link_libraries(bench_updates PRIVATE ${OPTIX_DRIVER_LIB})
+endif()
+
+# RPATH for runtime libnvoptix
+if(UNIX)
+  if(EXISTS "${OPTIX_ROOT}/lib64")
+    set_target_properties(bench_updates PROPERTIES
+      BUILD_RPATH "${OPTIX_ROOT}/lib64"
+      INSTALL_RPATH "${OPTIX_ROOT}/lib64")
+  elseif(EXISTS "${OPTIX_ROOT}/lib")
+    set_target_properties(bench_updates PROPERTIES
+      BUILD_RPATH "${OPTIX_ROOT}/lib"
+      INSTALL_RPATH "${OPTIX_ROOT}/lib")
+  endif()
+endif()
+
+##################################
+
+
+# Host executable for update benchmark
+add_executable(bench_multi_gpu
+    src/memory/gpu_manager.cpp
+    bench/bench_multi_gpu.cpp
+    src/rt/rt_pipeline.cpp
+    src/graph/graph.cpp
+    src/graph/algorithms.cpp
+    src/algorithms/partition.cpp
+    src/algorithms/bfs.cpp
+    src/algorithms/pr.cpp
+    src/algorithms/sssp.cpp
+    src/algorithms/bc.cpp
+    src/algorithms/tc.cpp
+    src/algorithms/wcc.cpp
+    src/algorithms/cdlp.cpp
+    src/kernels/cuda/bfs.cu
+    src/kernels/cuda/tc.cu
+    src/kernels/cuda/pr.cu
+    src/kernels/cuda/bc.cu
+    src/kernels/cuda/sssp.cu
+    src/kernels/cuda/wcc.cu
+    src/kernels/cuda/cdlp.cu
+    src/shared.h
+)
+add_dependencies(bench_multi_gpu device_ptx)
+
+# Pass PTX path
+target_compile_definitions(bench_multi_gpu PRIVATE DEVICE_PTX_PATH="${PTX_OUT}")
+
+# Includes & libs
+target_include_directories(bench_multi_gpu PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+    ${OPTIX_ROOT}/include
+    src
+)
+
+target_link_libraries(bench_multi_gpu PRIVATE
+    ${CUDAToolkit_LIBRARIES}
+    cuda
+    dl
+)
+
+if(OPTIX_DRIVER_LIB)
+    target_link_libraries(bench_multi_gpu PRIVATE ${OPTIX_DRIVER_LIB})
+endif()
+
+# RPATH for runtime libnvoptix
+if(UNIX)
+  if(EXISTS "${OPTIX_ROOT}/lib64")
+    set_target_properties(bench_multi_gpu PROPERTIES
+      BUILD_RPATH "${OPTIX_ROOT}/lib64"
+      INSTALL_RPATH "${OPTIX_ROOT}/lib64")
+  elseif(EXISTS "${OPTIX_ROOT}/lib")
+    set_target_properties(bench_multi_gpu PROPERTIES
       BUILD_RPATH "${OPTIX_ROOT}/lib"
       INSTALL_RPATH "${OPTIX_ROOT}/lib")
   endif()
