@@ -2,7 +2,6 @@
 #include <optix.h>
 #include <cstdint>
 
-// -------- graph primitive (UASP = segment of a vertex's adjacency) ----------
 struct UASP {
     uint32_t owner;      // vertex id
     uint32_t seg_idx;    // segment ordinal for this owner (0..k-1), 0 for 1-seg-per-vertex
@@ -15,7 +14,9 @@ enum QueryType : uint8_t {
     JOIN = 1,
     PAGERANK = 2,
     SSSP = 3,
-    BETWEENNESS = 4
+    BETWEENNESS = 4,
+    WCC = 5,
+    CDLP = 6
 };
 
 // Job record
@@ -104,4 +105,11 @@ struct Params {
     uint32_t        num_aabbs{0};
 
     const uint8_t* aabb_mask;
+
+    uint32_t* wcc_comp;   
+    uint32_t  wcc_current_comp;
+
+    uint32_t* cdlp_labels_curr;   // size num_vertices
+    uint32_t* cdlp_labels_next;   // size num_vertices
+    uint32_t* cdlp_changed;       // single u32 counter
 };
