@@ -12,7 +12,7 @@ GraphRTX provides:
 ## Overview
 
 
-GraphRTX loads standard graph datasets (`.mtx` Matrix Market files), builds GPU-optimized adjacency structures (UASP, triangles and AABBs), and executes a suite of common graph algorithms using either:
+GraphRTX loads standard graph datasets (`.mtx` Matrix Market files), builds GPU-optimized adjacency structures (UASP, triangles, and AABBs), and executes a suite of common graph algorithms using either:
 - pure **CUDA**, or
 - **OptiX + CUDA hybrid** pipelines that exploit RT cores for traversal.
 A GPU memory manager allows to analyze graphs larger than GPU memory efficiently.
@@ -28,8 +28,11 @@ A GPU memory manager allows to analyze graphs larger than GPU memory efficiently
 | **SSSP** (Single-Source Shortest Path) | ✓ | ✓ | Weighted relaxation |
 | **BC** (Betweenness Centrality) | ✓ | ✓ | Approximate version supported |
 | **TC** (Triangle Counting) | ✓ | ✓ | Geometric intersection-based variant |
+| **CDLP** (Community Detection via Label Propagation) | ✓ | ✓ | Geometric intersection-based variant |
+| **WCC** (Weakly Connected Components) | ✓ | ✓ | Geometric intersection-based variant |
+| **LCC** (Local Clustering Coefficient) | ✓ | ✓ | Via TC |
 
-All hybrid versions device workload between CUDA and OptiX to accelerate neighbor traversal and intersection operations.
+All hybrid versions divide the workload between CUDA and OptiX to accelerate neighbor traversal and intersection operations.
 
 ---
 ## Example Python call with NetworkX
@@ -79,6 +82,9 @@ make -j
 - kron21  
 - weibo  
 - twitter10  
-- orkut  
+- orkut
+LDBC
+- datagen
+- graph500
 - sk-2005  
 - friendster
